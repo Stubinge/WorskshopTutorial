@@ -1,0 +1,447 @@
+---
+title: "A Simple Introduction to Machine Learning"
+author: "Emma"
+date: "10/03/2020"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(readxl)
+library(caret)
+library(e1071)
+library(kernlab)
+library(randomForest)
+colorize <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{%s}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'>%s</span>", color, 
+      x)
+  } else x
+}
+```
+
+## Workshop description
+
+- Learning objectives:
+  - Play around with some basic data science/ML techniques
+  - Demonstrate why large quantities of data are needed
+  - Demonstrate the frustrations of data cleaning
+  - Perform model comparisons
+
+  - Spark some interesting conversations!
+  
+  - This is not an R course, code is provided if you want to follow along as we go
+
+## Materials and Setup 
+
+- Wifi: eduroam or visitor wifi
+- Helpers: Jamie-Leigh, Tom
+- https://rstudio.cloud/project/1008073
+    - Allow popups on RCloud
+
+
+
+## The Data Science Processs
+
+1. Find Data
+2. Clean the Data
+3. Run Models
+4. Tune Models
+5. Interpret Models
+
+
+
+### At what stage should **the question** be determined?
+
+## The Data Science Processs
+
+`r colorize("0. Identify the question", "red")` 
+
+1. Find Data
+2. Clean the Data
+3. Explore the data
+4. Run Models
+5. Tune Models
+6. Interpret Models
+
+Ideally at Step 0. Definately before Step 3.
+
+In reality often not until step 5!
+
+
+## The Data
+The data can be downloaded from https://wiki.cancerimagingarchive.net/display/Public/Head-Neck-PET-CT.
+
+*Vallières, M. et al. Radiomics strategies for risk assessment of tumour failure in head-and-neck cancer. Sci Rep 7, 10117 (2017). doi: 10.1038/s41598-017-10371-5*
+
+The original study **"Radiomics strategies for risk assessment of tumour failure in head-and-neck cancer"** investigated prediction models to predict *locoregional recurrences*, *distant metastases* and *overall survival* using clinical variables and radiomic data.
+
+(*radiomics* is a method that extracts large amount of features from radiographic medical images using data-characterisation algorithm, examples include tumour intensity, texture and shape). 
+
+
+## Today's Question
+
+**Can we predict overall survival for patients with H&N cancer?**
+
+The study found that models using clinical variables only were better for overall survival predictions. 
+
+They found the the clinical variables that predited it best were 
+
+* Age
+* H&N type
+* T-Stage
+* N-Stage
+
+```{r data, echo=FALSE}
+# Download the data
+dataset <- read_excel("SimplifiedHNData.xlsx")
+# Remove Sex and Patient Number
+dataset<-dataset[,3:7]
+```
+
+## Variable Selection
+Variable selection is an important stage of any ML problem and can prevent overfitting occurring.
+Variable selection methods include: 
+
+- Principal component analysis
+- Correlation analysis
+- Exploratory factor analysis
+- Multicollinearity
+- Backward/Forward elimination.
+
+Here we will skip this step by using the selected variables from the above paper.
+
+
+## The Data Science Processs
+
+1. Find Data
+2. `r colorize("Clean the Data", "red")` 
+3. Explore the data
+4. Run Models
+5. Tune Models
+6. Interpret Models
+
+## Pre-processing: cleaning the data
+
+Here a lot of the data cleaning has been done already as we are using data from a previous study. Patients from the study that had missing data or needed to be excluded have been. 
+
+However we need to make sure we are correctly modelling each variable. Here we will use three data types:
+
+* Continuous: `Age`
+* Categorigal: `PrimarySite`
+* Ordered categorigal: `TSite` and `NSite`
+
+```{r age, echo=FALSE}
+dataset$Age<-as.numeric(dataset$Age)
+dataset$PrimarySite<-as.factor(dataset$PrimarySite)
+unique(dataset$PrimarySite)
+dataset$Death<-as.factor(dataset$Death)
+dataset$TStage<-ordered(dataset$TStage,levels=c("Tx","T1", "T2","T3","T4","T4a","T4b"))
+dataset$NStage<-ordered(dataset$NStage)
+unique(dataset$TStage)
+unique(dataset$NStage)
+```
+
+
+## Create a training set
+
+We now need to split the dataset into two, *80%* of which we will use to train our models and *20%* that we will hold back as a test (validation) dataset.
+
+```{r TestSet, echo=FALSE}
+# create a list of 80% of the rows in the original dataset we can use for training
+set.seed(645) # This is so we can re-run this and get the same again
+validation_index <- createDataPartition(dataset$Age, p=0.80, list=FALSE)
+# select 20% of the data for testing
+test_data <- dataset[-validation_index,]
+# use the remaining 80% of data to train the models
+train_data <- dataset[validation_index,]
+```
+
+We create two datasets:
+
+1. The training set `train_data`, to build our models with
+2. The test set `test_data`, to validate our models with at the end.
+
+## The Data Science Processs
+
+1. Find Data
+2. Clean the Data 
+3. `r colorize("Explore the data", "red")`
+4. Run Models
+5. Tune Models
+6. Interpret Models
+
+
+## Summary statistics
+
+It is useful to understand the dataset and the variables it contains. 
+
+Here we will use the training dataset for our summary statistics.
+
+```{r Summary}
+#Look at the data
+head(train_data)
+#what levels are in the data?
+#levels(train_data$PrimarySite)
+#Summarise the class distribution
+percentage <- prop.table(table(train_data$PrimarySite)) * 100
+cbind(freq=table(train_data$PrimarySite), percentage=percentage)
+```
+
+## Statistical summary
+```{r Summary2}
+summary(train_data)
+```
+
+## Visualise the data
+We can create plots to understand the data further.
+
+```{r InOut, echo=FALSE}
+# split input and output
+x <- train_data[,1:4]
+y <- train_data[,5]
+```
+
+
+```{r plots}
+# boxplot for each attribute on one image
+par(mfrow=c(1,4))
+ boxplot(x[,1], main=names(train_data)[1])
+ for(i in 2:4) {
+plot(x[,i], main=names(train_data)[i])
+ }
+```
+
+## Visualise the data
+
+We can now use multivariate plots to look at the relationship between our variables.
+
+These look quite messy because we have mainly categorigal variables.
+```{r plots3}
+# scatterplot matrix
+featurePlot(x=x, y=y, plot="pairs")
+
+```
+
+## Visualise the data
+
+```{r plots4, echo=FALSE}
+ggplot(data = dataset, aes(x = factor(Death), y = Age, colour = PrimarySite)) + geom_boxplot() +
+  xlab("Death")
+
+```
+
+
+## Visualise the data
+```{r plots6, echo=FALSE}
+ qplot(PrimarySite, Age, data=train_data, 
+      fill=PrimarySite,
+      geom=c("boxplot"))
+ tapply(train_data$Age, train_data$PrimarySite, summary)
+```
+
+## The Data Science Processs
+
+1. Find Data
+2. Clean the Data 
+3. Explore the data
+4. `r colorize("Run Models", "red")`
+5. Tune Models
+6. Interpret Models
+
+
+## Run some algorithms
+
+Here we want to create our models and then test their accuracy on unseen data, our test set, `test_data`. 
+To do this we:
+
+1. Set up a test with k-fold cross validation
+2. Build 5 different models to predict Survival
+3. Select our best model
+
+
+
+
+## k-fold crossvalidation
+
+Cross-validation is a resampling procedure used to evaluate machine learning models, it is particularly useful when we have a limited data sample.
+
+`k` refers to the numeber of groups that the data will be split up into.
+
+Here we use `k=10`, 10-fold cross validation.
+
+## k-fold crossvalidation
+
+1. Randomly shuffle the dataset
+2. Split the data into `k` groups
+3. For each group:
+    + Assign a single group as the hold group (each group will be a hold set once)
+    + The remaining groups are the training groups 
+    + Fit a model on the training sets and evaluate it on the hold group
+    + Keep the evaluation score and discard the model
+4. The skill of the model is then summarised using the sample of model evaluation scores
+
+## k-fold crossvalidation
+
+Each observation in the (training) dataset stays in its assigned group throughout the process. In this way, each sample is left out of the model once and used to train the model `k-1` times.
+
+Be careful here, we again have a training and a test set. The `k` groups are only taken from `train_data`. 
+
+Here we will assess our models according to accuracy. 
+
+```{r k-fold, echo=FALSE}
+# Run algorithms using 10-fold cross validation
+control <- trainControl(method="cv", number=10)
+metric <- "Accuracy"
+```
+
+## Build our models
+
+Here we shall apply the following models:
+
+- Linear Discriminant Analysis (*LDA*)
+- Classification and Regression Trees (*CART*).
+- k-Nearest Neighbors (*kNN*).
+- Support Vector Machines (*SVM*) with a linear kernel.
+- Random Forest (*RF*)
+
+Here we have a simple linear model *LDA*, nonlinear models *CART, kNN* and complex nonlinear methods *SVM, RF*.
+
+
+## Build our models
+Here we have a simple linear model *LDA*, nonlinear models *CART, kNN* and complex nonlinear methods *SVM, RF*.
+
+- linear algorithms
+`fit.lda <- train(Death~., data=train_data, method="lda", metric=metric, trControl=control)`
+- nonlinear algorithms
+`fit.cart <- train(Death~., data=train_data, method="rpart", metric=metric, trControl=control)`
+`fit.knn <- train(Death~., data=train_data, method="knn", metric=metric, trControl=control)`
+- advanced algorithms
+`fit.svm <- train(Death~., data=train_data, method="svmRadial", metric=metric, trControl=control)`
+`fit.rf <- train(Death~., data=train_data, method="rf", metric=metric, trControl=control)`
+
+
+```{r Models, echo=FALSE}
+# a) linear algorithms
+set.seed(7)
+fit.lda <- train(Death~., data=train_data, method="lda", metric=metric, trControl=control)
+# b) nonlinear algorithms
+# CART
+set.seed(7)
+fit.cart <- train(Death~., data=train_data, method="rpart", metric=metric, trControl=control)
+# kNN
+set.seed(7)
+fit.knn <- train(Death~., data=train_data, method="knn", metric=metric, trControl=control)
+# c) advanced algorithms
+# SVM
+set.seed(7)
+fit.svm <- train(Death~., data=train_data, method="svmRadial", metric=metric, trControl=control)
+# Random Forest
+set.seed(7)
+fit.rf <- train(Death~., data=train_data, method="rf", metric=metric, trControl=control)
+```
+
+
+## The Data Science Processs
+
+1. Find Data
+2. Clean the Data 
+3. Explore the data
+4. Run Models
+5. `r colorize("Tune Models", "red")`
+6. Interpret Models
+
+## Tune the models
+Here we are using a r-package called *caret- Classification And REgression Training* which makes applying these models very straightforward. 
+
+All these models can be tuned, for more information see http://topepo.github.io/caret/model-training-and-tuning.html.
+
+## The Data Science Processs
+
+1. Find Data
+2. Clean the Data 
+3. Explore the data
+4. Run Models
+5. Tune Models
+6. `r colorize("Interpret Models", "red")`
+
+
+## Which is the best model?
+
+We now have 5 models and accuracy estimates for each. We now need to compare each model and pick the most accurate one. 
+
+```{r CompareModels}
+#summarize accuracy of models
+results <- resamples(list( lda=fit.lda,cart=fit.cart, knn=fit.knn, svm=fit.svm, rf=fit.rf))
+summary(results)
+```
+
+
+## Which is the best model?
+
+We can also create a plot of the model evaluation results and compare the spread and the mean accuracy of each model. There is a population of accuracy measures for each algorithm because each algorithm was evaluated 10 times (10 fold cross validation).
+
+```{r comparePlot}
+# compare accuracy of models
+dotplot(results)
+```
+
+Here `svm` is the most accurate. 
+
+
+
+## kappa
+
+The kappa value can be thought of as classification accuracy, it is normalised at the baseline of random chance on your dataser. Kappa takes into account the possibility of the agreement occurring by chance:
+
+* 0 = agreement equivalent to chance.
+* 0.1 – 0.20 = slight agreement.
+* 1 = perfect agreement
+
+Here `lda` has the best kappa value.
+
+## lda model
+We can look at more detailed information on each model using the print function
+```{r SummariseModel}
+# summarise Best Model
+print(fit.lda)
+```
+## Make predictions
+
+We now take our best model and make predictions on our validation set,`test_data`. This data has not been used to build any of our models.
+
+
+We run the **CART** model directly on the validation `test_data` set and summarise the results in a confusion matrix.
+
+## 
+```{r predictions}
+# estimate skill of LDA on the validation (test) dataset
+predictions <- predict(fit.cart, test_data)
+confusionMatrix(predictions, test_data$Death)
+```
+
+## Make predictions
+
+We can see that the accuracy is **86%**. However, here we have an imbalanced classification problem. 
+
+Even if we always predicted that nobody dies then accuracy would come out high at **100*(48/57)=84%.** 
+
+This highlights the importance of choosing appropriate error metrics!
+
+In the original paper this is dealt with by accounting for the im-balance between survivals and deaths.
+
+
+## Conclusions
+
+Hopefully you have seen:
+
+- Anyone can apply ML techiques by using simple functions such as `caret`
+- Interpreting ML models is much harder
+- Predictions that seem good may be misleading
+- Imbalanced problems require a lot of data
+
+
+For more material/examples see the `caret` package documentation https://topepo.github.io/caret/index.html.
+
